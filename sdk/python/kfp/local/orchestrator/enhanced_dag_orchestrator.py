@@ -269,6 +269,7 @@ class ParallelExecutor:
             # Submit all tasks
             future_to_task = {}
             for task_name, task_spec in tasks:
+                task_fail_stack: List[str] = []
                 future = executor.submit(
                     execute_task,
                     task_name=task_name,
@@ -280,18 +281,18 @@ class ParallelExecutor:
                     pipeline_root=pipeline_root,
                     runner=runner,
                     unique_pipeline_id=unique_pipeline_id,
-                    fail_stack=fail_stack,
+                    fail_stack=task_fail_stack,
                 )
-                future_to_task[future] = task_name
+                future_to_task[future] = (task_name, task_fail_stack)
 
-            # Collect results
-            for future in concurrent.futures.as_completed(future_to_task):
-                task_name = future_to_task[future]
+            # Collect in submission order for deterministic failure reporting.
+            for future, (task_name, task_fail_stack) in future_to_task.items():
                 try:
                     outputs, task_status = future.result()
 
                     if task_status == status.Status.FAILURE:
-                        fail_stack.append(task_name)
+                        task_fail_stack.append(task_name)
+                        fail_stack.extend(task_fail_stack)
                         return {}, status.Status.FAILURE
 
                     all_outputs[task_name] = outputs
@@ -303,7 +304,8 @@ class ParallelExecutor:
                 except Exception as e:
                     logging.error(
                         f'Task {task_name} failed with exception: {e}')
-                    fail_stack.append(task_name)
+                    task_fail_stack.append(task_name)
+                    fail_stack.extend(task_fail_stack)
                     return {}, status.Status.FAILURE
 
             return all_outputs, status.Status.SUCCESS
@@ -456,6 +458,9 @@ def _run_parallel_for_task(
     )
 
     if parallel_status == status.Status.FAILURE:
+        # Record the loop in the failure path after the failed iteration.
+        if not fail_stack or fail_stack[-1] != task_name:
+            fail_stack.append(task_name)
         return True
 
     # Aggregate iteration outputs into lists keyed by output name, in
@@ -580,6 +585,7 @@ def run_enhanced_dag(
                 continue
 
             if kind == TaskKind.REGULAR:
+                task_fail_stack: List[str] = []
                 outputs, task_status = execute_task(
                     task_name=task_name,
                     task_spec=task_spec,
@@ -590,7 +596,7 @@ def run_enhanced_dag(
                     pipeline_root=pipeline_root,
                     runner=runner,
                     unique_pipeline_id=unique_pipeline_id,
-                    fail_stack=fail_stack,
+                    fail_stack=task_fail_stack,
                 )
 
                 status_str = ('SUCCEEDED' if task_status
@@ -598,7 +604,9 @@ def run_enhanced_dag(
                 io_store.put_task_status(task_name, status_str)
 
                 if task_status == status.Status.FAILURE:
-                    fail_stack.append(task_name)
+                    if not fail_stack:
+                        fail_stack.extend(task_fail_stack)
+                        fail_stack.append(task_name)
                     failed_tasks.add(task_name)
                     body_failed = True
                     continue
@@ -616,6 +624,7 @@ def run_enhanced_dag(
                                  '(condition evaluated to False)')
                     continue
 
+                task_fail_stack: List[str] = []
                 outputs, task_status = execute_task(
                     task_name=task_name,
                     task_spec=task_spec,
@@ -626,7 +635,7 @@ def run_enhanced_dag(
                     pipeline_root=pipeline_root,
                     runner=runner,
                     unique_pipeline_id=unique_pipeline_id,
-                    fail_stack=fail_stack,
+                    fail_stack=task_fail_stack,
                 )
 
                 status_str = ('SUCCEEDED' if task_status
@@ -634,7 +643,9 @@ def run_enhanced_dag(
                 io_store.put_task_status(task_name, status_str)
 
                 if task_status == status.Status.FAILURE:
-                    fail_stack.append(task_name)
+                    if not fail_stack:
+                        fail_stack.extend(task_fail_stack)
+                        fail_stack.append(task_name)
                     failed_tasks.add(task_name)
                     body_failed = True
                     continue
@@ -643,6 +654,7 @@ def run_enhanced_dag(
                     io_store.put_task_output(task_name, key, output)
 
             elif kind == TaskKind.PARALLEL_FOR:
+                parallel_for_fail_stack: List[str] = []
                 parallel_for_failed = _run_parallel_for_task(
                     task_name=task_name,
                     task_spec=task_spec,
@@ -653,11 +665,13 @@ def run_enhanced_dag(
                     pipeline_root=pipeline_root,
                     runner=runner,
                     unique_pipeline_id=unique_pipeline_id,
-                    fail_stack=fail_stack,
+                    fail_stack=parallel_for_fail_stack,
                     parallel_executor=parallel_executor,
                 )
 
                 if parallel_for_failed:
+                    if not fail_stack:
+                        fail_stack.extend(parallel_for_fail_stack)
                     failed_tasks.add(task_name)
                     body_failed = True
 

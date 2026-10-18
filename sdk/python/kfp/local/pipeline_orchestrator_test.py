@@ -14,6 +14,7 @@
 """Tests for pipeline_orchestrator.py."""
 import io as stdlib_io
 import os
+import re
 import sys
 from typing import List, NamedTuple
 import unittest
@@ -689,6 +690,34 @@ class TestRunLocalPipeline(testing_utilities.LocalRunnerEnvironmentTestCase):
         stats = pip_install_manager.get_stats()
         self.assertLessEqual(stats['concurrent_peak'],
                              2)  # Should respect max concurrent limit
+
+    def test_parallel_for_failure_reports_first_iteration_path(self):
+        local.init(
+            local.SubprocessRunner(use_venv=False),
+            pipeline_root=ROOT_FOR_TESTING,
+        )
+
+        @dsl.component
+        def fail(item: int):
+            import time
+            if item == 0:
+                time.sleep(0.5)
+            raise RuntimeError(f"expected failure for {item}")
+
+        @dsl.pipeline
+        def my_pipeline():
+            with dsl.ParallelFor([0, 1, 2]) as item:
+                fail(item=item)
+
+        with self.assertRaises(RuntimeError) as context:
+            my_pipeline()
+
+        message = re.sub(r"\x1b\[[0-9;]*m", "", str(context.exception))
+        self.assertIn(
+            "Inner task failed: 'fail' inside "
+            "'for-loop-2-iteration-0' inside 'for-loop-2'.",
+            message,
+        )
 
     def test_condition_supported(self):
         local.init(local.SubprocessRunner(), pipeline_root=ROOT_FOR_TESTING)
