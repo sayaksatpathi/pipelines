@@ -287,6 +287,11 @@ class PipelineTaskTest(parameterized.TestCase):
         {'limit': 'abc'},
         {'limit': '1.5'},
         {'limit': '-1'},
+        {'limit': 1.5},
+        {'limit': 2.0},
+        {'limit': True},
+        {'limit': False},
+        {'limit': None},
     )
     def test_set_accelerator_limit_invalid(self, limit):
         task = pipeline_task.PipelineTask(
