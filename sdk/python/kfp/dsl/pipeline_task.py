@@ -517,13 +517,512 @@ class PipelineTask:
         self._ensure_container_spec_exists()
         if isinstance(limit, pipeline_channel.PipelineChannel):
             limit = str(limit)
-        else:
-            if isinstance(limit, int):
-                if limit < 0:
-                    raise ValueError('limit must be a non-negative integer.')
-                limit = str(limit)
-            if isinstance(limit, str) and re.match(r'^\d+$', limit) is None:
+        elif isinstance(limit, bool):
+            # bool is a subclass of int, but is not a valid accelerator count.
+            raise ValueError('limit must be a non-negative integer.')
+        elif isinstance(limit, int):
+            if limit < 0:
                 raise ValueError('limit must be a non-negative integer.')
+            limit = str(limit)
+        elif isinstance(limit, str):
+            if re.match(r'^\d+
+        if self.container_spec.resources is not None:
+            self.container_spec.resources.accelerator_count = limit
+        else:
+            self.container_spec.resources = structures.ResourceSpec(
+                accelerator_count=limit
+            )
+
+        return self
+
+    @warn_if_final()
+    def set_gpu_limit(self, gpu: str) -> 'PipelineTask':
+        """Sets GPU limit (maximum) for the task. Only applies if accelerator
+        type is also set via .add_accelerator_type().
+
+        Args:
+            gpu: The maximum GPU requests allowed. This string should be a positive integer number of GPUs.
+
+        Returns:
+            Self return to allow chained setting calls.
+
+        :meta private:
+        """
+        warnings.warn(
+            f'{self.set_gpu_limit.__name__!r} is deprecated. Please use {self.set_accelerator_limit.__name__!r} instead.',
+            category=DeprecationWarning,
+        )
+        return self.set_accelerator_limit(gpu)
+
+    def _validate_memory_request_limit(self, memory: str) -> str:
+        """Validates a memory request/limit string.
+
+        Args:
+            memory: Memory requests or limits, as a Kubernetes quantity.
+
+        Raises:
+            ValueError if the memory request/limit string value is invalid.
+
+        Returns:
+            The memory request/limit in the form Kubernetes accepts.
+        """
+        if isinstance(memory, pipeline_channel.PipelineChannel):
+            return str(memory)
+
+        normalized = utils.normalize_resource_quantity(memory)
+        if normalized is None:
+            raise ValueError(
+                f'Invalid memory string {memory!r}. Should be a non-negative '
+                'Kubernetes quantity, such as "512Mi", "1.5Gi", "2G" or the '
+                'plain byte count "1000".'
+            )
+        return normalized
+
+    @warn_if_final()
+    def set_memory_request(
+        self, memory: Union[str, pipeline_channel.PipelineChannel]
+    ) -> 'PipelineTask':
+        """Sets memory request (minimum) for the task.
+
+        Args:
+            memory: The minimum memory requests required, as a Kubernetes
+                quantity such as ``'512Mi'``, ``'1.5Gi'`` or ``'2G'``. For more
+                information, see `Resource units in Kubernetes
+                <https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-units-in-kubernetes>`_.
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        self._ensure_container_spec_exists()
+
+        memory = self._validate_memory_request_limit(memory)
+
+        if self.container_spec.resources is not None:
+            self.container_spec.resources.memory_request = memory
+        else:
+            self.container_spec.resources = structures.ResourceSpec(
+                memory_request=memory
+            )
+
+        return self
+
+    @warn_if_final()
+    def set_memory_limit(
+        self, memory: Union[str, pipeline_channel.PipelineChannel]
+    ) -> 'PipelineTask':
+        """Sets memory limit (maximum) for the task.
+
+        Args:
+            memory: The maximum memory allowed, as a Kubernetes quantity such
+                as ``'512Mi'``, ``'1.5Gi'`` or ``'2G'``. For more information,
+                see `Resource units in Kubernetes
+                <https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#resource-units-in-kubernetes>`_.
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        self._ensure_container_spec_exists()
+
+        memory = self._validate_memory_request_limit(memory)
+
+        if self.container_spec.resources is not None:
+            self.container_spec.resources.memory_limit = memory
+        else:
+            self.container_spec.resources = structures.ResourceSpec(
+                memory_limit=memory
+            )
+
+        return self
+
+    _VALID_RETRY_POLICIES = frozenset(structures._RETRY_POLICY_MAP)
+
+    @block_if_final()
+    def set_retry(
+        self,
+        num_retries: int,
+        backoff_duration: Optional[str] = None,
+        backoff_factor: Optional[float] = None,
+        backoff_max_duration: Optional[str] = None,
+        policy: Optional[str] = None,
+    ) -> 'PipelineTask':
+        """Sets task retry parameters.
+
+        Args:
+            num_retries : Number of times to retry on failure.
+            backoff_duration: Number of seconds to wait before triggering a retry. Defaults to ``'0s'`` (immediate retry).
+            backoff_factor: Exponential backoff factor applied to ``backoff_duration``. For example, if ``backoff_duration="60s"`` (60 seconds) and ``backoff_factor=2``, the first retry will happen after 60 seconds, then again after 120, 240, and so on. Defaults to ``2.0``.
+            backoff_max_duration: Maximum duration during which the task will be retried. Defaults to ``'3600s'``.
+            policy: Controls which failure types trigger a retry. Only supported
+                when using Argo Workflows as the pipeline execution engine. One of
+                ``'Always'``, ``'OnFailure'``, ``'OnError'``, or
+                ``'OnTransientError'``. ``'OnFailure'`` retries container exits,
+                including SIGTERM (exit code 143); ``'OnError'`` retries pods that
+                report no exit code, such as deletion or node loss;
+                ``'OnTransientError'`` retries either when the failure message
+                matches the controller's transient-error pattern; ``'Always'``
+                retries both.
+                Defaults to ``None``, which omits the policy so the
+                deployment's Argo configuration applies; KFP's bundled
+                manifests set ``'OnError'``.
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        if policy is not None and policy not in self._VALID_RETRY_POLICIES:
+            raise ValueError(
+                f'Invalid retry policy {policy!r}. '
+                f'Must be one of: {sorted(self._VALID_RETRY_POLICIES)}'
+            )
+        self._task_spec.retry_policy = structures.RetryPolicy(
+            max_retry_count=num_retries,
+            backoff_duration=backoff_duration,
+            backoff_factor=backoff_factor,
+            backoff_max_duration=backoff_max_duration,
+            policy=policy,
+        )
+        return self
+
+    @warn_if_final()
+    def add_node_selector_constraint(self, accelerator: str) -> 'PipelineTask':
+        """Deprecated. Use :meth:`set_accelerator_type` instead.
+
+        Sets accelerator type to use when executing this task.
+
+        Args:
+            accelerator: The name of the accelerator, such as ``'NVIDIA_TESLA_K80'``, ``'TPU_V3'``, ``'nvidia.com/gpu'`` or ``'cloud-tpus.google.com/v3'``.
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        warnings.warn(
+            f'{self.add_node_selector_constraint.__name__!r} is deprecated. Please use {self.set_accelerator_type.__name__!r} instead.',
+            category=DeprecationWarning,
+        )
+        return self.set_accelerator_type(accelerator)
+
+    @warn_if_final()
+    def set_accelerator_type(
+        self, accelerator: Union[str, pipeline_channel.PipelineChannel]
+    ) -> 'PipelineTask':
+        """Sets accelerator type to use when executing this task.
+
+        Args:
+            accelerator: The name of the accelerator, such as ``'NVIDIA_TESLA_K80'``, ``'TPU_V3'``, ``'nvidia.com/gpu'`` or ``'cloud-tpus.google.com/v3'``.
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        self._ensure_container_spec_exists()
+        if isinstance(accelerator, pipeline_channel.PipelineChannel):
+            accelerator = str(accelerator)
+
+        if self.container_spec.resources is not None:
+            self.container_spec.resources.accelerator_type = accelerator
+            if self.container_spec.resources.accelerator_count is None:
+                self.container_spec.resources.accelerator_count = '1'
+        else:
+            self.container_spec.resources = structures.ResourceSpec(
+                accelerator_count='1', accelerator_type=accelerator
+            )
+
+        return self
+
+    @warn_if_final()
+    def set_display_name(self, name: str) -> 'PipelineTask':
+        """Sets display name for the task.
+
+        Args:
+            name: Display name.
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        self._task_spec.display_name = name
+        return self
+
+    @block_if_final()
+    def set_env_variable(self, name: str, value: str) -> 'PipelineTask':
+        """Sets environment variable for the task.
+
+        Args:
+            name: Environment variable name.
+            value: Environment variable value.
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        self._ensure_container_spec_exists()
+
+        if self.container_spec.env is not None:
+            self.container_spec.env[name] = value
+        else:
+            self.container_spec.env = {name: value}
+        return self
+
+    @block_if_final()
+    def set_debug_pause(
+        self,
+        before: bool = False,
+        after: bool = True,
+        on_error: bool = False,
+    ) -> 'PipelineTask':
+        """Enable interactive debug-pause for the pipeline task.
+
+        Keeps the pod alive so you can ``kubectl exec`` into it
+        interactively.
+
+        When enabled, Argo Workflows' executor (the ``wait`` container)
+        detects the corresponding ``ARGO_DEBUG_PAUSE_*`` environment variable
+        and pauses the workflow node, preventing the pod from terminating.
+
+        This requires Argo Workflows 3.5.0 or later.
+
+        Args:
+            before: If ``True``, pause before the main process starts.
+                Useful for inspecting the environment, installing tools, or
+                modifying inputs before execution.
+            after: If ``True`` (default), pause after the main process
+                completes. Modified by ``on_error``.
+            on_error: If ``True``, only pause after execution when the
+                component fails (sets ``ARGO_DEBUG_PAUSE_ON_ERROR`` instead
+                of ``ARGO_DEBUG_PAUSE_AFTER``). Requires ``after=True``.
+
+        Returns:
+            Self return to allow chained setting calls.
+
+        Raises:
+            ValueError: If ``after=False`` and ``on_error=True``
+                (contradictory).
+            ValueError: If both ``before`` and ``after`` are ``False``.
+
+        Example:
+          ::
+
+            @dsl.pipeline
+            def my_pipeline():
+                task = my_component()
+                task.set_debug_pause()
+
+                task2 = my_component()
+                task2.set_debug_pause(before=True, after=False)
+
+                task3 = my_component()
+                task3.set_debug_pause(on_error=True)
+        """
+        if not after and on_error:
+            raise ValueError(
+                "'on_error' applies to post-execution pause and requires "
+                'after=True. Got after=False, on_error=True - contradictory '
+                'configuration.'
+            )
+
+        if not before and not after:
+            raise ValueError(
+                "At least one of 'before' or 'after' must be True. "
+                'Got before=False, after=False - nothing to pause on.'
+            )
+
+        if before:
+            self.set_env_variable('ARGO_DEBUG_PAUSE_BEFORE', 'true')
+        if after:
+            if on_error:
+                self.set_env_variable('ARGO_DEBUG_PAUSE_ON_ERROR', 'true')
+            else:
+                self.set_env_variable('ARGO_DEBUG_PAUSE_AFTER', 'true')
+
+        return self
+
+    @block_if_final()
+    def set_container_image(
+        self, name: Union[str, pipeline_channel.PipelineChannel]
+    ) -> 'PipelineTask':
+        """Sets the container image to use when executing this task.
+
+        Takes precedence over the `base_image` specified in the `@component` decorator.
+
+        Unlike `base_image`, this method supports dynamic values such as
+        Pipeline Parameters or outputs from previous tasks, which are resolved at runtime.
+
+        Args:
+            name: The container image name as a static string (e.g., "python:3.11-alpine")
+                or a dynamic reference (e.g., a PipelineParameter instance or
+                a task output like `task.outputs['image_name']`).
+
+        Returns:
+            Self return to allow chained setting calls.
+        """
+        self._ensure_container_spec_exists()
+        pipeline_channels = pipeline_channel.extract_pipeline_channels_from_any(
+            name
+        )
+
+        if isinstance(name, pipeline_channel.PipelineChannel):
+            name = str(name)
+
+        self.container_spec.image = name
+
+        if pipeline_channels:
+            self.register_pipeline_channels(pipeline_channels)
+        return self
+
+    @block_if_final()
+    def after(self, *tasks: AfterDependencyType) -> 'PipelineTask':
+        """Specifies an explicit dependency on other tasks by requiring this
+        task be executed after other tasks finish completion.
+
+        Args:
+            *tasks: Upstream dependencies after which this task should be
+                executed. Each dependency must be either a ``PipelineTask`` or
+                a ``dsl.ExitHandler`` group.
+
+        Returns:
+            Self return to allow chained setting calls.
+
+        Example:
+          ::
+
+            @dsl.pipeline(name='my-pipeline')
+            def my_pipeline():
+                task1 = my_component(text='1st task')
+                task2 = my_component(text='2nd task').after(task1)
+        """
+        from kfp.dsl import tasks_group
+
+        for task in tasks:
+            if isinstance(task, (PipelineTask, tasks_group.ExitHandler)):
+                dependency_name = task.name
+            elif isinstance(task, tasks_group.TasksGroup):
+                raise ValueError(
+                    f'".after()" on task group "{task.name}" of type '
+                    f'dsl.{task.__class__.__name__} is not supported. Only '
+                    'dsl.ExitHandler groups can be used as .after() '
+                    'dependencies.'
+                )
+            else:
+                raise ValueError(
+                    'PipelineTask.after() only supports PipelineTask and '
+                    f'dsl.ExitHandler dependencies. Got '
+                    f'{task.__class__.__name__}.'
+                )
+            self._run_after.append(dependency_name)
+            self._task_spec.dependent_tasks.append(dependency_name)
+        return self
+
+    @block_if_final()
+    def ignore_upstream_failure(self) -> 'PipelineTask':
+        """If called, the pipeline task will run when any specified upstream
+        tasks complete, even if unsuccessful.
+
+        This method effectively turns the caller task into an exit task
+        if the caller task has upstream dependencies.
+
+        If the task has no upstream tasks, either via data exchange or an explicit dependency via .after(), this method has no effect.
+
+        Returns:
+            Self return to allow chained setting calls.
+
+        Example:
+          ::
+
+            @dsl.pipeline()
+            def my_pipeline(text: str = 'message'):
+                task = fail_op(message=text)
+                clean_up_task = print_op(
+                    message=task.output).ignore_upstream_failure()
+        """
+
+        for input_spec_name, input_spec in (
+            self.component_spec.inputs or {}
+        ).items():
+            if type_utils.is_task_final_status_type(input_spec.type):
+                continue
+            argument_value = self._inputs[input_spec_name]
+            if (
+                (isinstance(argument_value, pipeline_channel.PipelineChannel))
+                and (not input_spec.optional)
+                and (argument_value.task_name is not None)
+            ):
+                raise ValueError(
+                    f'Tasks can only use .ignore_upstream_failure() if all input parameters that accept arguments created by an upstream task have a default value, in case the upstream task fails to produce its output. Input parameter task {self.name!r}`s {input_spec_name!r} argument is an output of an upstream task {argument_value.task_name!r}, but {input_spec_name!r} has no default value.'
+                )
+
+        self._ignore_upstream_failure_tag = True
+
+        return self
+
+
+def check_primitive_placeholder_is_used_for_correct_io_type(
+    inputs_dict: Dict[str, structures.InputSpec],
+    outputs_dict: Dict[str, structures.OutputSpec],
+    arg: Union[placeholders.CommandLineElement, Any],
+):
+    """Validates input/output placeholders refer to an input/output with an
+    appropriate type for the placeholder. Validates structured placeholders in
+    container components before their conversion to IR strings.
+
+    Args:
+        inputs_dict: The existing input names.
+        outputs_dict: The existing output names.
+        arg: The command line element, which may be a placeholder.
+    """
+    if isinstance(arg, placeholders.InputValuePlaceholder):
+        input_name = arg.input_name
+        if not type_utils.is_parameter_type(inputs_dict[input_name].type):
+            raise TypeError(
+                f'Input "{input_name}" with type '
+                f'"{inputs_dict[input_name].type}" cannot be paired with '
+                'InputValuePlaceholder.'
+            )
+
+    elif isinstance(
+        arg,
+        (placeholders.InputUriPlaceholder, placeholders.InputPathPlaceholder),
+    ):
+        input_name = arg.input_name
+        if type_utils.is_parameter_type(inputs_dict[input_name].type):
+            raise TypeError(
+                f'Input "{input_name}" with type '
+                f'"{inputs_dict[input_name].type}" cannot be paired with '
+                f'{arg.__class__.__name__}.'
+            )
+
+    elif isinstance(arg, placeholders.OutputUriPlaceholder):
+        output_name = arg.output_name
+        if type_utils.is_parameter_type(outputs_dict[output_name].type):
+            raise TypeError(
+                f'Output "{output_name}" with type '
+                f'"{outputs_dict[output_name].type}" cannot be paired with '
+                f'{arg.__class__.__name__}.'
+            )
+    elif isinstance(arg, placeholders.IfPresentPlaceholder):
+        all_normalized_args: List[placeholders.CommandLineElement] = []
+        if arg.then is None:
+            pass
+        elif isinstance(arg.then, list):
+            all_normalized_args.extend(arg.then)
+        else:
+            all_normalized_args.append(arg.then)
+
+        if arg.else_ is None:
+            pass
+        elif isinstance(arg.else_, list):
+            all_normalized_args.extend(arg.else_)
+        else:
+            all_normalized_args.append(arg.else_)
+
+        for arg in all_normalized_args:
+            check_primitive_placeholder_is_used_for_correct_io_type(
+                inputs_dict, outputs_dict, arg
+            )
+    elif isinstance(arg, placeholders.ConcatPlaceholder):
+        for arg in arg.items:
+            check_primitive_placeholder_is_used_for_correct_io_type(
+                inputs_dict, outputs_dict, arg
+            )
+, limit) is None:
+                raise ValueError('limit must be a non-negative integer.')
+        else:
+            raise ValueError('limit must be a non-negative integer.')
 
         if self.container_spec.resources is not None:
             self.container_spec.resources.accelerator_count = limit
