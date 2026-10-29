@@ -517,13 +517,18 @@ class PipelineTask:
         self._ensure_container_spec_exists()
         if isinstance(limit, pipeline_channel.PipelineChannel):
             limit = str(limit)
-        else:
-            if isinstance(limit, int):
-                if limit < 0:
-                    raise ValueError('limit must be a non-negative integer.')
-                limit = str(limit)
-            if isinstance(limit, str) and re.match(r'^\d+$', limit) is None:
+        elif isinstance(limit, bool):
+            # bool is a subclass of int, but is not a valid accelerator count.
+            raise ValueError('limit must be a non-negative integer.')
+        elif isinstance(limit, int):
+            if limit < 0:
                 raise ValueError('limit must be a non-negative integer.')
+            limit = str(limit)
+        elif isinstance(limit, str):
+            if re.match(r'^\d+$', limit) is None:
+                raise ValueError('limit must be a non-negative integer.')
+        else:
+            raise ValueError('limit must be a non-negative integer.')
 
         if self.container_spec.resources is not None:
             self.container_spec.resources.accelerator_count = limit
