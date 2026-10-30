@@ -1110,7 +1110,10 @@ def _single_binary_operation_to_cel_condition(
 
     operand_values = []
     for value_or_reference in [left_operand, right_operand]:
-        if isinstance(value_or_reference, pipeline_channel.PipelineChannel):
+        is_channel = isinstance(
+            value_or_reference, pipeline_channel.PipelineChannel
+        )
+        if is_channel:
             input_name = (
                 compiler_utils.additional_input_name_for_pipeline_channel(
                     value_or_reference
@@ -1159,7 +1162,13 @@ def _single_binary_operation_to_cel_condition(
                 ]
                 # Keep symbolic runtime expressions in CEL; only fold literals in Python.
                 if is_channel:
-                    operand_value = f'({operand_value} != 0)'
+                    zero = (
+                        '0.0'
+                        if parameter_type
+                        == pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE
+                        else '0'
+                    )
+                    operand_value = f'({operand_value} != {zero})'
                 else:
                     operand_value = (
                         'true' if value_or_reference != 0 else 'false'
