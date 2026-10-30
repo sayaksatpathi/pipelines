@@ -26,6 +26,7 @@ from kfp.compiler import compiler
 from kfp.compiler import compiler_utils
 from kfp.compiler import pipeline_spec_builder
 from kfp.dsl import TaskConfigField
+from kfp.dsl import pipeline_channel
 from kfp.pipeline_spec import pipeline_spec_pb2
 import yaml
 
@@ -611,7 +612,9 @@ class TestTaskConfigPassthroughValidationPositive(unittest.TestCase):
 class TestNumericPipelineChannelBooleanConditions(unittest.TestCase):
     """Regression coverage for numeric-channel / boolean-literal conditions."""
 
-    def _compile_condition(self, channel_type, operator, boolean, channel_first=True):
+    def _compile_condition(
+        self, channel_type, operator, boolean, channel_first=True
+    ):
         @dsl.component
         def produce_value() -> channel_type:
             return 1
@@ -625,9 +628,17 @@ class TestNumericPipelineChannelBooleanConditions(unittest.TestCase):
             value = produce_value()
             channel = value.output
             if channel_first:
-                condition = channel == boolean if operator == '==' else channel != boolean
+                condition = (
+                    channel == boolean
+                    if operator == '=='
+                    else channel != boolean
+                )
             else:
-                condition = boolean == channel if operator == '==' else boolean != channel
+                condition = (
+                    boolean == channel
+                    if operator == '=='
+                    else boolean != channel
+                )
             with dsl.If(condition):
                 consume()
 
@@ -637,11 +648,17 @@ class TestNumericPipelineChannelBooleanConditions(unittest.TestCase):
             with open(package_path) as f:
                 return yaml.safe_load(f)
 
-    def test_integer_channel_compiles_for_both_booleans_and_operand_orders(self):
+    def test_integer_channel_compiles_for_both_booleans_and_operand_orders(
+        self,
+    ):
         for boolean in (True, False):
             for channel_first in (True, False):
-                with self.subTest(boolean=boolean, channel_first=channel_first):
-                    self._compile_condition(int, '==', boolean, channel_first)
+                with self.subTest(
+                    boolean=boolean, channel_first=channel_first
+                ):
+                    self._compile_condition(
+                        int, '==', boolean, channel_first
+                    )
 
     def test_float_channel_compiles_for_true_and_false(self):
         for boolean in (True, False):
@@ -666,7 +683,6 @@ class TestNumericPipelineChannelBooleanConditions(unittest.TestCase):
             ),
             'true == true',
         )
-
 
 
 class TestPlatformConfigDAGBoundaryHandling(unittest.TestCase):
