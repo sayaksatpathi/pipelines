@@ -1157,7 +1157,13 @@ def _single_binary_operation_to_cel_condition(
                     pipeline_spec_pb2.ParameterType.NUMBER_INTEGER,
                     pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE,
                 ]
-                operand_value = 'true' if int(operand_value) == 0 else 'false'
+                # Keep symbolic runtime expressions in CEL; only fold literals in Python.
+                if is_channel:
+                    operand_value = f'({operand_value} != 0)'
+                else:
+                    operand_value = (
+                        'true' if value_or_reference != 0 else 'false'
+                    )
             else:
                 assert (
                     canonical_parameter_type
