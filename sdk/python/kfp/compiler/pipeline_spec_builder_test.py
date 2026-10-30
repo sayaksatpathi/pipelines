@@ -607,6 +607,68 @@ class TestTaskConfigPassthroughValidationPositive(unittest.TestCase):
                 pipeline_func=pipe, package_path=package_path)
 
 
+
+class TestNumericPipelineChannelBooleanConditions(unittest.TestCase):
+    """Regression coverage for numeric-channel / boolean-literal conditions."""
+
+    def _compile_condition(self, channel_type, operator, boolean, channel_first=True):
+        @dsl.component
+        def produce_value() -> channel_type:
+            return 1
+
+        @dsl.component
+        def consume():
+            pass
+
+        @dsl.pipeline
+        def pipe():
+            value = produce_value()
+            channel = value.output
+            if channel_first:
+                condition = channel == boolean if operator == '==' else channel != boolean
+            else:
+                condition = boolean == channel if operator == '==' else boolean != channel
+            with dsl.If(condition):
+                consume()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            package_path = os.path.join(tmpdir, 'pipeline.yaml')
+            compiler.Compiler().compile(pipe, package_path)
+            with open(package_path) as f:
+                return yaml.safe_load(f)
+
+    def test_integer_channel_compiles_for_both_booleans_and_operand_orders(self):
+        for boolean in (True, False):
+            for channel_first in (True, False):
+                with self.subTest(boolean=boolean, channel_first=channel_first):
+                    self._compile_condition(int, '==', boolean, channel_first)
+
+    def test_float_channel_compiles_for_true_and_false(self):
+        for boolean in (True, False):
+            with self.subTest(boolean=boolean):
+                self._compile_condition(float, '==', boolean)
+
+    def test_not_equal_channel_comparisons_compile(self):
+        for boolean in (True, False):
+            with self.subTest(boolean=boolean):
+                self._compile_condition(int, '!=', boolean)
+
+    def test_numeric_literals_use_correct_boolean_truthiness(self):
+        self.assertEqual(
+            pipeline_spec_builder._single_binary_operation_to_cel_condition(
+                pipeline_channel.ConditionOperation('==', 0, True)
+            ),
+            'false == true',
+        )
+        self.assertEqual(
+            pipeline_spec_builder._single_binary_operation_to_cel_condition(
+                pipeline_channel.ConditionOperation('==', 2, True)
+            ),
+            'true == true',
+        )
+
+
+
 class TestPlatformConfigDAGBoundaryHandling(unittest.TestCase):
     """Tests that platform config input references are correctly rewritten when
     tasks are inside sub-DAGs (e.g. ParallelFor)."""
