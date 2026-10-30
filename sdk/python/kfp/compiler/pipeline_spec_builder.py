@@ -1032,7 +1032,8 @@ def _binary_operations_to_cel_conjunctive(
 
 
 def _single_binary_operation_to_cel_condition(
-        operation: pipeline_channel.ConditionOperation) -> str:
+    operation: pipeline_channel.ConditionOperation,
+) -> str:
     """Converts a ConditionOperation to a CEL string with placeholders.
 
     Args:
@@ -1048,15 +1049,18 @@ def _single_binary_operation_to_cel_condition(
     for value_or_reference in [left_operand, right_operand]:
         if isinstance(value_or_reference, pipeline_channel.PipelineChannel):
             parameter_type = type_utils.get_parameter_type(
-                value_or_reference.channel_type)
+                value_or_reference.channel_type
+            )
             if parameter_type in [
-                    pipeline_spec_pb2.ParameterType.STRUCT,
-                    pipeline_spec_pb2.ParameterType.LIST,
-                    pipeline_spec_pb2.ParameterType
-                    .PARAMETER_TYPE_ENUM_UNSPECIFIED,
+                pipeline_spec_pb2.ParameterType.STRUCT,
+                pipeline_spec_pb2.ParameterType.LIST,
+                pipeline_spec_pb2.ParameterType.PARAMETER_TYPE_ENUM_UNSPECIFIED,
             ]:
-                input_name = compiler_utils.additional_input_name_for_pipeline_channel(
-                    value_or_reference)
+                input_name = (
+                    compiler_utils.additional_input_name_for_pipeline_channel(
+                        value_or_reference
+                    )
+                )
                 raise ValueError(
                     f'Conditional requires primitive parameter values for comparison. Found input "{input_name}" of type {value_or_reference.channel_type} in pipeline definition instead.'
                 )
@@ -1066,10 +1070,12 @@ def _single_binary_operation_to_cel_condition(
     for value_or_reference in [left_operand, right_operand]:
         if isinstance(value_or_reference, pipeline_channel.PipelineChannel):
             parameter_type = type_utils.get_parameter_type(
-                value_or_reference.channel_type)
+                value_or_reference.channel_type
+            )
         else:
             parameter_type = type_utils.get_parameter_type(
-                type(value_or_reference).__name__)
+                type(value_or_reference).__name__
+            )
 
         parameter_types.add(parameter_type)
 
@@ -1084,11 +1090,16 @@ def _single_binary_operation_to_cel_condition(
             canonical_parameter_type = pipeline_spec_pb2.ParameterType.BOOLEAN
         else:
             # Must be a double and int, promote to double.
-            assert pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE in parameter_types, \
-                f'Types: {parameter_types} [{left_operand} {right_operand}]'
-            assert pipeline_spec_pb2.ParameterType.NUMBER_INTEGER in parameter_types, \
-                f'Types: {parameter_types} [{left_operand} {right_operand}]'
-            canonical_parameter_type = pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE
+            assert (
+                pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE in parameter_types
+            ), f'Types: {parameter_types} [{left_operand} {right_operand}]'
+            assert (
+                pipeline_spec_pb2.ParameterType.NUMBER_INTEGER
+                in parameter_types
+            ), f'Types: {parameter_types} [{left_operand} {right_operand}]'
+            canonical_parameter_type = (
+                pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE
+            )
     elif len(parameter_types) == 1:  # Both operands are the same type.
         canonical_parameter_type = parameter_types.pop()
     else:
@@ -1100,11 +1111,15 @@ def _single_binary_operation_to_cel_condition(
     operand_values = []
     for value_or_reference in [left_operand, right_operand]:
         if isinstance(value_or_reference, pipeline_channel.PipelineChannel):
-            input_name = compiler_utils.additional_input_name_for_pipeline_channel(
-                value_or_reference)
+            input_name = (
+                compiler_utils.additional_input_name_for_pipeline_channel(
+                    value_or_reference
+                )
+            )
             operand_value = f"inputs.parameter_values['{input_name}']"
             parameter_type = type_utils.get_parameter_type(
-                value_or_reference.channel_type)
+                value_or_reference.channel_type
+            )
             if parameter_type == pipeline_spec_pb2.ParameterType.NUMBER_INTEGER:
                 operand_value = f'int({operand_value})'
         elif isinstance(value_or_reference, str):
@@ -1124,22 +1139,34 @@ def _single_binary_operation_to_cel_condition(
 
         if parameter_type != canonical_parameter_type:
             # Type-cast to so CEL does not complain.
-            if canonical_parameter_type == pipeline_spec_pb2.ParameterType.STRING:
+            if (
+                canonical_parameter_type
+                == pipeline_spec_pb2.ParameterType.STRING
+            ):
                 assert parameter_type in [
                     pipeline_spec_pb2.ParameterType.BOOLEAN,
                     pipeline_spec_pb2.ParameterType.NUMBER_INTEGER,
                     pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE,
                 ]
                 operand_value = f"'{operand_value}'"
-            elif canonical_parameter_type == pipeline_spec_pb2.ParameterType.BOOLEAN:
+            elif (
+                canonical_parameter_type
+                == pipeline_spec_pb2.ParameterType.BOOLEAN
+            ):
                 assert parameter_type in [
                     pipeline_spec_pb2.ParameterType.NUMBER_INTEGER,
                     pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE,
                 ]
                 operand_value = 'true' if int(operand_value) == 0 else 'false'
             else:
-                assert canonical_parameter_type == pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE
-                assert parameter_type == pipeline_spec_pb2.ParameterType.NUMBER_INTEGER
+                assert (
+                    canonical_parameter_type
+                    == pipeline_spec_pb2.ParameterType.NUMBER_DOUBLE
+                )
+                assert (
+                    parameter_type
+                    == pipeline_spec_pb2.ParameterType.NUMBER_INTEGER
+                )
                 operand_value = f'double({operand_value})'
 
         operand_values.append(operand_value)
@@ -1147,7 +1174,8 @@ def _single_binary_operation_to_cel_condition(
     left_operand_value, right_operand_value = tuple(operand_values)
 
     condition_string = (
-        f'{left_operand_value} {operation.operator} {right_operand_value}')
+        f'{left_operand_value} {operation.operator} {right_operand_value}'
+    )
 
     return f'!({condition_string})' if operation.negate else condition_string
 
