@@ -656,19 +656,26 @@ class TestNumericPipelineChannelBooleanConditions(unittest.TestCase):
                 with self.subTest(
                     boolean=boolean, channel_first=channel_first
                 ):
-                    self._compile_condition(
+                    compiled_spec = self._compile_condition(
                         int, '==', boolean, channel_first
                     )
+                    self.assertIn(' != 0', yaml.safe_dump(compiled_spec))
 
     def test_float_channel_compiles_for_true_and_false(self):
         for boolean in (True, False):
             with self.subTest(boolean=boolean):
-                self._compile_condition(float, '==', boolean)
+                compiled_spec = self._compile_condition(
+                    float, '==', boolean
+                )
+                self.assertIn(' != 0.0', yaml.safe_dump(compiled_spec))
 
     def test_not_equal_channel_comparisons_compile(self):
         for boolean in (True, False):
             with self.subTest(boolean=boolean):
-                self._compile_condition(int, '!=', boolean)
+                compiled_spec = self._compile_condition(
+                    int, '!=', boolean
+                )
+                self.assertIn(' != 0', yaml.safe_dump(compiled_spec))
 
     def test_numeric_literals_use_correct_boolean_truthiness(self):
         self.assertEqual(
